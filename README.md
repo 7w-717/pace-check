@@ -4,7 +4,7 @@
 
 纯前端，单个 HTML 文件。不用装东西、不用联网、文件不会上传到任何地方。双击 `index.html` 就能用。
 
-![播放器里的报告：判定「像幻灯片」](docs/report-slideshow.png)
+![播放器里的报告：判定「像幻灯片」](report-slideshow.png)
 
 ---
 
@@ -51,7 +51,7 @@
 | 43.8s，重做前 | 0.083 | 84.8% | 9.0s | **像幻灯片** |
 | 45s，重做后 | 3.481 | 2.1% | 0s | **正常** |
 
-![重做后的报告：判定「正常」](docs/report-normal.png)
+![重做后的报告：判定「正常」](report-normal.png)
 
 ## 命令行版
 
@@ -86,7 +86,7 @@ node verify.mjs your-video.mp4
 
 - `index.html` — 工具本体，双击即用
 - `verify.mjs` — 命令行版
-- `docs/sample.mp4` — 一段故意做成幻灯片的样片，拿来试手
+- `sample.mp4` — 一段故意做成幻灯片的样片，拿来试手
 
 ## 许可
 
