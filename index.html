@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>节奏体检 · PaceCheck</title>
+<style>
+  :root{
+    --bg:#0a0d12; --panel:#121821; --line:#1e2733; --text:#e8eef6;
+    --dim:#7b8a9d; --cyan:#3ddbd9; --red:#ff4d5e; --amber:#ffb020; --green:#4ade80;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:14px/1.6 "PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+  header{padding:22px 28px 14px;border-bottom:1px solid var(--line)}
+  h1{margin:0;font-size:19px;letter-spacing:.5px;font-weight:600}
+  h1 span{color:var(--cyan)}
+  .sub{color:var(--dim);font-size:12.5px;margin-top:6px}
+  main{padding:20px 28px 60px;max-width:1180px}
+  .drop{border:1.5px dashed var(--line);border-radius:12px;padding:44px 20px;text-align:center;
+    background:var(--panel);cursor:pointer;transition:.18s}
+  .drop:hover,.drop.over{border-color:var(--cyan);background:#131c26}
+  .drop b{color:var(--cyan)}
+  .drop small{display:block;color:var(--dim);margin-top:8px;font-size:12px}
+  #file{display:none}
+  .row{display:flex;gap:16px;flex-wrap:wrap;margin-top:18px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;flex:1;min-width:150px}
+  .card .k{color:var(--dim);font-size:12px}
+  .card .v{font-size:24px;font-weight:600;margin-top:4px;font-variant-numeric:tabular-nums}
+  .card .v.ok{color:var(--green)} .card .v.warn{color:var(--amber)} .card .v.bad{color:var(--red)}
+  #progress{margin-top:16px;height:4px;background:var(--line);border-radius:2px;overflow:hidden;display:none}
+  #bar{height:100%;width:0;background:var(--cyan);transition:width .1s}
+  #status{color:var(--dim);font-size:12.5px;margin-top:8px}
+  canvas{display:block;width:100%;border-radius:10px;background:var(--panel);border:1px solid var(--line)}
+  h2{font-size:14px;font-weight:600;margin:28px 0 10px;color:var(--dim);letter-spacing:1px}
+  .issue{display:flex;gap:12px;padding:10px 14px;border-radius:8px;background:var(--panel);
+    border-left:3px solid var(--line);margin-bottom:8px;font-size:13px}
+  .issue.bad{border-left-color:var(--red)} .issue.warn{border-left-color:var(--amber)}
+  .issue.ok{border-left-color:var(--green)}
+  .issue .t{color:var(--dim);font-variant-numeric:tabular-nums;min-width:110px}
+  .legend{display:flex;gap:18px;color:var(--dim);font-size:12px;margin-top:8px;flex-wrap:wrap}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+  #hover{color:var(--cyan);font-variant-numeric:tabular-nums}
+  video{display:none}
+  .foot{margin-top:36px;color:var(--dim);font-size:12px;border-top:1px solid var(--line);padding-top:14px;line-height:1.8}
+</style>
+</head>
+<body>
+<header>
+  <h1>节奏体检 <span>PaceCheck</span></h1>
+  <div class="sub">拖一个视频进来，逐帧量它到底在不在「动」。所有计算都在你的浏览器里完成，文件不会上传。</div>
+</header>
+<main>
+  <div class="drop" id="drop">
+    <b>拖入视频 / 点击选择</b>
+    <small>mp4 / webm / mov · 建议 2 分钟以内 · 分析速度约为片长的 0.5–2 倍</small>
+  </div>
+  <input type="file" id="file" accept="video/*">
+  <video id="v" muted playsinline></video>
+  <div id="progress"><div id="bar"></div></div>
+  <div id="status"></div>
+
+  <div class="row" id="cards" style="display:none">
+    <div class="card"><div class="k">中位动能量</div><div class="v" id="c-med">—</div></div>
+    <div class="card"><div class="k">低动帧占比</div><div class="v" id="c-low">—</div></div>
+    <div class="card"><div class="k">最长静止段</div><div class="v" id="c-freeze">—</div></div>
+    <div class="card"><div class="k">切点数</div><div class="v" id="c-cut">—</div></div>
+    <div class="card"><div class="k">判定</div><div class="v" id="c-verdict">—</div></div>
+  </div>
+
+  <h2>动能量曲线</h2>
+  <canvas id="chart" width="1120" height="260"></canvas>
+  <div class="legend">
+    <span><i style="background:var(--cyan)"></i>逐帧动能量</span>
+    <span><i style="background:var(--red)"></i>低动（&lt;0.6）</span>
+    <span><i style="background:var(--amber)"></i>纯黑帧</span>
+    <span><i style="background:#5b6b7f"></i>切点</span>
+    <span id="hover"></span>
+  </div>
+
+  <h2>诊断</h2>
+  <div id="issues"></div>
+
+  <div class="foot">
+    度量口径：把每帧缩到 480px 宽、转灰度，取相邻帧的平均绝对差（0–255）。<br>
+    低动阈值 0.6，幻灯片判据「中位 &lt; 1.2 且低动帧 &gt; 70%」，静止段 1.2 秒起计。<br>
+    这套口径来自一个反复踩坑的教训：小面积运动、随机颗粒、把黑的地方挪一挪，在降采样之后都测不出来。
+  </div>
+</main>
+<script>
+const SAMPLE_FPS = 30;     // 采样帧率：跟原口径一致，低采样会把帧差放大
+const W = 480, H = 270;    // 分析分辨率
+const LOW_DIFF = 0.6;
+const SLIDE_MED = 1.2;
+const SLIDE_LOW = 0.70;
+const FREEZE_SEC = 1.2;
+const DARK_LUM = 18;
+
+const $ = id => document.getElementById(id);
+const drop = $('drop'), file = $('file'), v = $('v');
+const bar = $('bar'), progress = $('progress'), status = $('status');
+
+drop.addEventListener('click', () => file.click());
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over') });
+drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+drop.addEventListener('drop', e => {
+  e.preventDefault(); drop.classList.remove('over');
+  if (e.dataTransfer.files[0]) run(e.dataTransfer.files[0]);
+});
+file.addEventListener('change', () => { if (file.files[0]) run(file.files[0]) });
+
+// ?auto=demo.mp4 —— 自动载入并分析，跑完把标题改成 DONE（给无头截图/录屏用）
+(async () => {
+  const q = new URLSearchParams(location.search).get('auto');
+  if (!q) return;
+  try {
+    const r = await fetch(q);
+    const b = await r.blob();
+    await run(new File([b], q, { type: b.type || 'video/mp4' }));
+    document.title = 'DONE';
+  } catch (e) {
+    document.title = 'ERR ' + e.message;
+  }
+})();
+
+const cvs = document.createElement('canvas');
+cvs.width = W; cvs.height = H;
+const cctx = cvs.getContext('2d', { willReadFrequently: true });
+
+function seek(t) {
+  return new Promise(res => {
+    const on = () => { v.removeEventListener('seeked', on); res() };
+    v.addEventListener('seeked', on);
+    v.currentTime = t;
+  });
+}
+
+function luma(data) {
+  // 返回灰度数组（0-255）
+  const out = new Float32Array(W * H);
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+    out[p] = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+  }
+  return out;
+}
+
+function meanAbsDiff(a, b) {
+  let s = 0;
+  for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]);
+  return s / a.length;
+}
+
+async function run(f) {
+  status.textContent = '读取文件…';
+  cards.style.display = 'none';
+  issues.innerHTML = '';
+  v.src = URL.createObjectURL(f);
+  await new Promise(res => v.addEventListener('loadedmetadata', res, { once: true }));
+
+  const dur = v.duration || 0;
+  if (!dur || !isFinite(dur)) { status.textContent = '读不出时长，换一个文件试试。'; return }
+
+  const step = 1 / SAMPLE_FPS;
+  const n = Math.max(2, Math.floor(dur / step));
+  progress.style.display = 'block';
+  status.textContent = `开始分析：${dur.toFixed(1)} 秒，${n} 帧`;
+
+  const diffs = [], lums = [];
+  let prev = null;
+
+  for (let i = 0; i < n; i++) {
+    const t = Math.min(dur - 0.02, i * step);
+    await seek(t);
+    cctx.drawImage(v, 0, 0, W, H);
+    const px = cctx.getImageData(0, 0, W, H).data;
+    const g = luma(px);
+    let lum = 0;
+    for (let k = 0; k < g.length; k += 17) lum += g[k];
+    lum /= Math.ceil(g.length / 17);
+    lums.push(lum);
+    diffs.push(prev ? meanAbsDiff(prev, g) : 0);
+    prev = g;
+    if (i % 4 === 0) {
+      bar.style.width = ((i / n) * 100).toFixed(1) + '%';
+      status.textContent = `分析中 ${i}/${n} · ${t.toFixed(1)}s`;
+      await new Promise(r => setTimeout(r, 0));
+    }
+  }
+  bar.style.width = '100%';
+  progress.style.display = 'none';
+  status.textContent = `分析完成：${n} 帧`;
+
+  report(diffs, lums, step, dur);
+}
+
+function median(arr) {
+  const a = arr.slice().sort((x, y) => x - y);
+  const mid = a.length >> 1;
+  return a.length % 2 ? a[mid] : (a[mid - 1] + a[mid]) / 2;
+}
+
+function report(diffs, lums, step, dur) {
+  const d = diffs.slice(1);
+  const med = median(d);
+  const lowRatio = d.filter(x => x < LOW_DIFF).length / d.length;
+
+  // 静止段
+  const freezes = [];
+  let start = -1;
+  d.forEach((x, i) => {
+    if (x < LOW_DIFF) { if (start < 0) start = i }
+    else if (start >= 0) { freezes.push([start, i]); start = -1 }
+  });
+  if (start >= 0) freezes.push([start, d.length]);
+  const longFreezes = freezes
+    .map(([a, b]) => ({ a: a * step, b: b * step, sec: (b - a) * step }))
+    .filter(x => x.sec >= FREEZE_SEC)
+    .sort((x, y) => y.sec - x.sec);
+
+  // 纯黑帧：相对判据 —— 比全片中位亮度低一大截才算，避免暗调风格的片子被误报
+  const lumMed = median(lums);
+  const darkLine = Math.min(DARK_LUM * 2.2, lumMed * 0.35);
+  const darks = (lumMed < 8 ? [] : lums.map((l, i) => l < darkLine ? i : -1).filter(i => i >= 0));
+
+  // 切点：跟「自己周围那段」比，不用全局死阈值。
+  // 幻灯片整片的动能量都极小，固定阈值会一个切点都检不出来。
+  const cuts = [];
+  const WIN = 15;
+  for (let i = 2; i < d.length - 2; i++) {
+    const around = [];
+    for (let k = Math.max(0, i - WIN); k <= Math.min(d.length - 1, i + WIN); k++) if (k !== i) around.push(d[k]);
+    around.sort((a, b) => a - b);
+    const localMed = around[around.length >> 1] || 0;
+    if (d[i] > Math.max(1.6, localMed * 3) && d[i] >= d[i - 1] && d[i] >= d[i + 1]) {
+      if (!cuts.length || i * step - cuts[cuts.length - 1] > 0.25) cuts.push(i * step);
+    }
+  }
+
+  const slide = med < SLIDE_MED && lowRatio > SLIDE_LOW;
+
+  // 卡片
+  cards.style.display = 'flex';
+  const setv = (id, txt, cls) => { const e = $(id); e.textContent = txt; e.className = 'v ' + (cls || '') };
+  setv('c-med', med.toFixed(2), med >= SLIDE_MED ? 'ok' : med >= 0.9 ? 'warn' : 'bad');
+  setv('c-low', (lowRatio * 100).toFixed(0) + '%', lowRatio <= 0.5 ? 'ok' : lowRatio <= SLIDE_LOW ? 'warn' : 'bad');
+  setv('c-freeze', longFreezes.length ? longFreezes[0].sec.toFixed(2) + 's' : '无', longFreezes.length ? 'warn' : 'ok');
+  setv('c-cut', String(cuts.length), 'ok');
+  setv('c-verdict', slide ? '像幻灯片' : med < SLIDE_MED ? '偏静' : '正常', slide ? 'bad' : med < SLIDE_MED ? 'warn' : 'ok');
+
+  // 诊断条目
+  const out = [];
+  if (slide) {
+    out.push(['bad', `整体`, `中位动能量 ${med.toFixed(2)}、低动帧 ${(lowRatio * 100).toFixed(0)}% —— 连续多段几乎没有运动，观众看到的是翻页。`]);
+  } else if (med < SLIDE_MED) {
+    out.push(['warn', `整体`, `中位动能量 ${med.toFixed(2)}，偏低但没到幻灯片。加一点大面积的持续运动会更稳。`]);
+  } else {
+    out.push(['ok', `整体`, `中位动能量 ${med.toFixed(2)}，画面一直在动。`]);
+  }
+  longFreezes.slice(0, 5).forEach(x =>
+    out.push(['warn', `${x.a.toFixed(1)}–${x.b.toFixed(1)}s`, `静止 ${x.sec.toFixed(2)} 秒。除非是刻意的「静」，否则观众会以为卡了。`]));
+  if (darks.length) {
+    out.push(['warn', `${(darks[0] * step).toFixed(2)}s 起`, `有 ${darks.length} 帧明显偏黑（亮度低于全片中位）。检查是不是转场遮罩把画面盖掉了。`]);
+  }
+  if (cuts.length < Math.max(3, dur * 0.15)) {
+    out.push(['warn', `切点`, `只检出 ${cuts.length} 个切点（${dur.toFixed(0)} 秒）。镜头太长，节奏会拖。`]);
+  } else {
+    out.push(['ok', `切点`, `${cuts.length} 个切点，平均 ${(dur / cuts.length).toFixed(1)} 秒一次。`]);
+  }
+  issues.innerHTML = out.map(([cls, t, s]) =>
+    `<div class="issue ${cls}"><div class="t">${t}</div><div>${s}</div></div>`).join('');
+
+  window.__report = { median: med, lowRatio, freezes: longFreezes, cuts: cuts.length, darks: darks.length, dur };
+  drawChart(diffs, lums, step, cuts);
+}
+
+function drawChart(diffs, lums, step, cuts) {
+  const c = $('chart'), ctx = c.getContext('2d');
+  const w = c.width, h = c.height, pad = 10;
+  ctx.clearRect(0, 0, w, h);
+  const max = Math.max(2, ...diffs);
+  const X = i => pad + (i / (diffs.length - 1)) * (w - pad * 2);
+  const Y = v => h - pad - Math.min(1, v / max) * (h - pad * 2);
+
+  // 网格
+  ctx.strokeStyle = '#1e2733'; ctx.lineWidth = 1;
+  [0.25, 0.5, 0.75].forEach(p => {
+    ctx.beginPath(); ctx.moveTo(pad, h * p); ctx.lineTo(w - pad, h * p); ctx.stroke();
+  });
+
+  // 低动区
+  ctx.fillStyle = 'rgba(255,77,94,.13)';
+  for (let i = 0; i < diffs.length - 1; i++) {
+    if (diffs[i] < LOW_DIFF) ctx.fillRect(X(i), pad, Math.max(1, X(i + 1) - X(i)), h - pad * 2);
+  }
+  // 纯黑帧
+  const lumMed2 = median(lums);
+  const darkLine2 = Math.min(DARK_LUM * 2.2, lumMed2 * 0.35);
+  ctx.fillStyle = 'rgba(255,176,32,.22)';
+  if (lumMed2 >= 8) lums.forEach((l, i) => { if (l < darkLine2) ctx.fillRect(X(i), pad, Math.max(1, X(i + 1) - X(i)), h - pad * 2); });
+
+  // 曲线
+  ctx.strokeStyle = '#3ddbd9'; ctx.lineWidth = 1.4; ctx.beginPath();
+  diffs.forEach((v, i) => i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v)));
+  ctx.stroke();
+
+  // 切点
+  ctx.strokeStyle = 'rgba(91,107,127,.8)'; ctx.lineWidth = 1;
+  cuts.forEach(t => {
+    const x = X(Math.round(t / step));
+    ctx.beginPath(); ctx.moveTo(x, pad); ctx.lineTo(x, h - pad); ctx.stroke();
+  });
+
+  // hover
+  c.onmousemove = e => {
+    const r = c.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width * w;
+    const i = Math.round((x - pad) / (w - pad * 2) * (diffs.length - 1));
+    if (i < 0 || i >= diffs.length) return;
+    $('hover').textContent = `t=${(i * step).toFixed(2)}s · 动能量 ${diffs[i].toFixed(2)}`;
+  };
+  c.onmouseleave = () => { $('hover').textContent = '' };
+}
+</script>
+</body>
+</html>
